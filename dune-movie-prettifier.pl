@@ -34,17 +34,19 @@ use constant {
 		BACKDROP_ALPHA => .075,
 		BACKGROUND_WIDTH => 1920,
 		BACKGROUND_HEIGHT => 1080,
+		BACKGROUND_PADDING => 50,
+		TRAIL_HEIGHT => 40,
 		SCROLLBAR_WIDTH => 40,
 		ICON_WIDTH => 800,
-		ICON_HEIGHT => 420,
-		POSTER_WIDTH => 260,
-		POSTER_HEIGHT => 390,
+		ICON_HEIGHT => 400,
+		POSTER_WIDTH => 240,
+		POSTER_HEIGHT => 360,
 		REGULAR_FONT_FILE => SCRIPT_DIR . '/Cabin-Regular.otf',
 		BOLD_FONT_FILE => SCRIPT_DIR . '/Cabin-Bold.otf',
 		SMALL_FONT_SIZE => 17,
 		NORMAL_FONT_SIZE => 19,
-		LARGE_FONT_SIZE => 24,
-		LARGER_FONT_SIZE => 27,
+		LARGE_FONT_SIZE => 22,
+		LARGER_FONT_SIZE => 26,
 		LEADING => 1.5,
 		PARAGRAPH_SPACING => 0.5,
 		JPEG_QUALITY => 90,
@@ -564,13 +566,18 @@ END
 		1);
 }
 
-my $padding = 50;
-my $cboxh = BACKGROUND_HEIGHT - 2 * $padding;
-my $cboxw = BACKGROUND_WIDTH - 2 * $padding;
-my $cboxwx = $cboxw + SCROLLBAR_WIDTH;
 my $rowh = 70;
 my $fix = 40;
-my $maxrowcnt = int(($cboxh - $fix) / $rowh);
+
+my $cboxw = BACKGROUND_WIDTH - 2 * BACKGROUND_PADDING;
+my $cboxwx = $cboxw + SCROLLBAR_WIDTH;
+my $bodyh = BACKGROUND_HEIGHT - 2 * BACKGROUND_PADDING - TRAIL_HEIGHT;
+
+my $maxrowcnt = int(($bodyh - $fix) / $rowh);
+
+my $cboxx = BACKGROUND_PADDING;
+my $cboxh = $rowh + $fix;
+my $cboxy = BACKGROUND_PADDING + int(($bodyh - $cboxh) / 2);
 
 my (@keys, %data);
 
@@ -616,8 +623,7 @@ while (my ($type, $info) = each %d) {
 }
 
 print "Creating overview ...", $/;
-$cboxh = $rowh + $fix;
-my $ypad = int((BACKGROUND_HEIGHT - $cboxh) / 2);
+create_background('menu', []);
 open(my $root_fh, '>:utf8', "$base_path/dune_folder.txt")
 	or croak qq{Cannot open "$base_path/dune_folder.txt" for writing: $!};
 print $root_fh <<END;
@@ -634,11 +640,11 @@ paint_help_line = no
 paint_icon_selection_box = yes
 paint_content_box_background = yes
 direct_children.icon_valign = center
-background_path = $dune_url/background_black.png
+background_path = $dune_url/menu/background.png
 background_x = 0
 background_y = 0
-content_box_x = $padding
-content_box_y = $ypad
+content_box_x = $cboxx
+content_box_y = $cboxy
 content_box_width = $cboxwx
 content_box_height = $cboxh
 END
@@ -739,16 +745,20 @@ sub get_media_info {
 sub create_movie_folders {
 	my ($name, $keys, $data, $cols, $large) = @_;
 	print "Creating listings per $name ...", $/;
-	my $dir = "$dune_path/menu/$name";
-	attempt_mkdir($dir);
+	my $rel = "menu/$name";
+	my $abs = "$dune_path/$rel";
+	my $trail = [ 'By ' . ucfirst($name) ];
+	attempt_mkdir($abs);
+	create_background($rel, $trail);
 	my $rows = ceil(@keys / $cols);
 	my $rowcnt = min $maxrowcnt, $rows;
 	my $colcnt = min $cols, scalar @keys;
-	my $w = $rows > $rowcnt ? $cboxw : $cboxwx;
-	my $h = $rowcnt * $rowh + $fix;
-	my $ypad = int((BACKGROUND_HEIGHT - $h) / 2);
-	open(my $fh, '>:utf8', "$dir/dune_folder.txt")
-		or croak qq{Cannot open "$dir/dune_folder.txt" for writing: $!};
+	my $cboxw = $rows > $rowcnt ? $cboxw : $cboxwx;
+	my $cboxh = $rowcnt * $rowh + $fix;
+	my $cboxx = BACKGROUND_PADDING;
+	my $cboxy = BACKGROUND_PADDING + int(($bodyh - $cboxh) / 2);
+	open(my $fh, '>:utf8', "$abs/dune_folder.txt")
+		or croak qq{Cannot open "$abs/dune_folder.txt" for writing: $!};
 	print $fh <<END;
 system_files = *
 sort_field = unsorted
@@ -763,18 +773,18 @@ paint_help_line = no
 paint_icon_selection_box = yes
 paint_content_box_background = yes
 direct_children.icon_valign = center
-background_path = $dune_url/background_black.png
+background_path = $dune_url/$rel/background.png
 background_x = 0
 background_y = 0
-content_box_x = $padding
-content_box_y = $ypad
-content_box_width = $w
-content_box_height = $h
+content_box_x = $cboxx
+content_box_y = $cboxy
+content_box_width = $cboxw
+content_box_height = $cboxh
 END
 	my $cnt = 0;
 	foreach my $key (@keys) {
 		my ($caption, $keydata) = @{$data->{$key}};
-		create_movie_folder("$dir/$key", $keydata);
+		create_movie_folder("$rel/$key", $keydata, [ @$trail, $caption ]);
 		my $hash = create_label($caption,
 			REGULAR_FONT_FILE,
 			$large ? LARGE_FONT_SIZE : NORMAL_FONT_SIZE,
@@ -794,11 +804,16 @@ END
 }
 
 sub create_movie_folder {
-	my ($path, $movies) = @_;
-	attempt_mkdir($path);
+	my ($rel, $movies, $trail) = @_;
+	my $abs = "$dune_path/$rel";
+	attempt_mkdir($abs);
+	create_background($rel, $trail);
 	my $w = @$movies > 4 ? $cboxw : $cboxwx;
-	open(my $fh, '>:utf8', "$path/dune_folder.txt")
-		or croak qq{Cannot open "$path/dune_folder.txt" for writing: $!};
+	my $cboxx = BACKGROUND_PADDING;
+	my $cboxy = BACKGROUND_PADDING;
+	my $cboxh = $bodyh;
+	open(my $fh, '>:utf8', "$abs/dune_folder.txt")
+		or croak qq{Cannot open "$abs/dune_folder.txt" for writing: $!};
 	print $fh <<END;
 system_files = *
 sort_field = unsorted
@@ -812,11 +827,11 @@ paint_help_line = no
 paint_icon_selection_box = yes
 paint_content_box_background = no
 direct_children.icon_valign = center
-background_path = $dune_url/background_black.png
+background_path = $dune_url/$rel/background.png
 background_x = 0
 background_y = 0
-content_box_x = $padding
-content_box_y = $padding
+content_box_x = $cboxx
+content_box_y = $cboxy
 content_box_width = $w
 content_box_height = $cboxh
 END
@@ -831,6 +846,24 @@ END
 		$rcnt++;
 	}
 	close($fh);
+}
+
+sub create_background {
+	my ($rel, $trail) = @_;
+	my $abs = "$dune_path/$rel";
+	my $file = "$abs/background.png";
+	my $img = GD::Image->new(BACKGROUND_WIDTH, BACKGROUND_HEIGHT, 1);
+	$img->colorAllocate(0, 0, 0);
+	my $fg = $img->colorAllocateAlpha(255, 255, 255, 79);
+	my $text = join('  >  ', 'Home', 'Movies', @$trail);
+	my $font_file = REGULAR_FONT_FILE;
+	my $font_size = SMALL_FONT_SIZE;
+	my $m = get_font_metrics($font_file, $font_size);
+	my $w = get_text_width($text, $font_file, $font_size);
+	my $x = (BACKGROUND_WIDTH - $w) / 2;
+	my $y = BACKGROUND_HEIGHT - BACKGROUND_PADDING;
+	$img->stringFT($fg, $font_file, $font_size, 0, $x, $y, $text);
+	write_image($img, $file);
 }
 
 sub create_label {
