@@ -852,6 +852,7 @@ sub create_background {
 	my ($rel, $trail) = @_;
 	my $abs = "$dune_path/$rel";
 	my $file = "$abs/background.png";
+	return if !$renew_images && -e $file;
 	my $img = GD::Image->new(BACKGROUND_WIDTH, BACKGROUND_HEIGHT, 1);
 	$img->colorAllocate(0, 0, 0);
 	my $fg = $img->colorAllocateAlpha(255, 255, 255, 79);
