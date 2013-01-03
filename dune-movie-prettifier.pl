@@ -331,14 +331,7 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %movie_ids) {
 	my $transp = $icon_gd->colorAllocateAlpha(255, 255, 255, 79);
 	$poster_filename = "$dune_path/default_poster.jpg"
 		unless -s $poster_filename;
-	my $head;
-	open(my $pfh, '<', $poster_filename)
-		or croak qq{Cannot open "$poster_filename" for reading: $!};
-	read $pfh, $head, 4;
-	close $pfh;
-	my $poster_gd = $head eq chr(hex(89)) . 'PNG'
-		? GD::Image->newFromPng($poster_filename, 1)
-		: GD::Image->newFromJpeg($poster_filename, 1);
+	my $poster_gd = read_image($poster_filename);
 	my $par = $poster_gd->width / $poster_gd->height;
 	my $iar = $config{poster_width} / $config{poster_height};
 	my ($srcx, $srcy, $srcw, $srch);
@@ -356,9 +349,10 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %movie_ids) {
 		$srcw = $poster_gd->width * (1 - $dar);
 	}
 	$icon_gd->copyResampled($poster_gd,
-		$padding, $padding, $srcx, $srcy, $config{poster_width}, $config{poster_height},
+		$padding, $padding, $srcx, $srcy,
+		$config{poster_width}, $config{poster_height},
 		$srcw, $srch);
-	
+
 	my $byline;
 	if ($data->{year} || $data->{title}) {
 		if ($data->{year}) {
@@ -413,12 +407,16 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %movie_ids) {
 	$white = $bg_gd->colorAllocate(255, 255, 255);
 	$transp = $bg_gd->colorAllocateAlpha(255, 255, 255, 79);
 	if (-s $backdrop_filename) {
-		my $bd_gd = GD::Image->newFromJpeg($backdrop_filename, 1);
-		my $tb = $bg_gd->colorAllocateAlpha(
-			0, 0, 0, round(127 * $config{backdrop_alpha}));
-		$bd_gd->filledRectangle(0, 0, $bd_gd->width - 1, $bd_gd->height - 1, $tb);
-		$bg_gd->copyResampled($bd_gd, 0, 0, 0, 0,
-			$config{background_width}, $config{background_height}, $bd_gd->width, $bd_gd->height);
+		my $bd_gd = read_image($backdrop_filename);
+		if (defined $bg_gd) {
+			my $tb = $bg_gd->colorAllocateAlpha(
+				0, 0, 0, round(127 * $config{backdrop_alpha}));
+			$bd_gd->filledRectangle(0, 0,
+				$bd_gd->width - 1, $bd_gd->height - 1, $tb);
+			$bg_gd->copyResampled($bd_gd, 0, 0, 0, 0,
+				$config{background_width}, $config{background_height},
+				$bd_gd->width, $bd_gd->height);
+		}
 	}
 	$bg_gd->copyResampled($poster_gd,
 		$bg_padding, $bg_padding, 0, 0, $bgpw, $bgph,
@@ -1021,6 +1019,19 @@ sub trim_line {
 	}
 	$line = "$line &hellip;";
 	return $line;
+}
+
+sub read_image {
+	my ($file) = @_;
+	my $head;
+	open(my $fh, '<', $file)
+	or croak qq{Cannot open "file" for reading: $!};
+	binmode $fh;
+	read $fh, $head, 4;
+	close $fh;
+	return ($head eq chr(hex(89)) . 'PNG')
+		? GD::Image->newFromPng($file, 1)
+		: GD::Image->newFromJpeg($file, 1);
 }
 
 sub write_image {
