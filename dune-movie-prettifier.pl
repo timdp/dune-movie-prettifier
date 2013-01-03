@@ -70,6 +70,7 @@ foreach my $key (keys %config) {
 	$opt{"$option_name=$type"} = \$config{$key};
 }
 $opt{'ignore-genre=s'} = $config{ignore_genres} = [];
+$opt{'filename-ignore=s'} = $config{filename_ignore} = [];
 $opt{'video-file-extension=s'} = $config{video_file_extensions} = [];
 GetOptions(%opt) or exit 1;
 $config{alphabet_boundaries} = [ split(//, $config{alphabet_boundaries}) ];
@@ -116,6 +117,7 @@ my $api_key = <$afh>;
 close($afh);
 chomp $api_key;
 
+my $movie_ignore_re = join '|', '(?:19|20)\d\d', @{$config{filename_ignore}};
 my %ignore_genre = map { $_ => undef } @{$config{ignore_genres}};
 my %font_metrics = ();
 
@@ -150,22 +152,10 @@ closedir($root_dh);
 @movies = sort { uc($a) cmp uc($b) }
 	grep { /^[^._]/ && -d "$base_path/$_" } @movies;
 
-my $ignore_file = $script_dir . '/ignore.txt';
-my $ignore_re = '(?:19|20)\d\d';
-if (-e $ignore_file) {
-	open(my $ifh, '<', $ignore_file)
-		or croak qq{Cannot open "$ignore_file" for reading: $!};
-	while (my $word = <$ifh>) {
-		chomp $word;
-		$ignore_re .= '|' . quotemeta($word);
-	}
-	close($ifh);
-}
-
 foreach my $movie_id (grep { !exists $cache{$_} } @movies) {
 	print "Determining TMDB ID of $movie_id ...\n";
 	(my $query = $movie_id) =~ s/[.!,;\-_]/ /g;
-	$query =~ s/\ (?:$ignore_re)(?:\ .*|$)//oix;
+	$query =~ s/\ (?:$movie_ignore_re)(?:\ .*|$)//oix;
 	my $tmdb_id;
 	my @candidates = $tmdb->search->movie($query);
 	if (@candidates == 0) {
