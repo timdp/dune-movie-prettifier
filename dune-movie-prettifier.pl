@@ -24,52 +24,90 @@ use TMDB qw();
 
 $| = 1;
 
-use constant SCRIPT_DIR => dirname(File::Spec->rel2abs(__FILE__));
 use constant DECADE_UNKNOWN => 32768;
 
-use constant {
-		DUNE_DATA_DIR => '__Dune',
-		CACHE_MAX_AGE => 30 * 24 * 60 * 60,
-		MAX_STARS => 3,
-		BACKDROP_ALPHA => .075,
-		BACKGROUND_WIDTH => 1920,
-		BACKGROUND_HEIGHT => 1080,
-		BACKGROUND_PADDING => 50,
-		TRAIL_HEIGHT => 40,
-		SCROLLBAR_WIDTH => 40,
-		ICON_WIDTH => 800,
-		ICON_HEIGHT => 400,
-		POSTER_WIDTH => 240,
-		POSTER_HEIGHT => 360,
-		REGULAR_FONT_FILE => SCRIPT_DIR . '/Cabin-Regular.otf',
-		BOLD_FONT_FILE => SCRIPT_DIR . '/Cabin-Bold.otf',
-		SMALL_FONT_SIZE => 17,
-		NORMAL_FONT_SIZE => 19,
-		LARGE_FONT_SIZE => 22,
-		LARGER_FONT_SIZE => 26,
-		LEADING => 1.5,
-		PARAGRAPH_SPACING => 0.5,
-		JPEG_QUALITY => 90,
-		IGNORE_GENRES => [ 'Foreign', 'Sci-Fi & Fantasy' ],
-		ALPHABET_BOUNDARIES => [ qw(I R) ]
-	};
+my $script_dir = dirname(File::Spec->rel2abs(__FILE__));
 
 my ($renew_info, $renew_images, $renew_labels);
-GetOptions(
+my %opt = (
 		'renew-details' => \$renew_info,
 		'renew-images' => \$renew_images,
 		'renew-labels' => \$renew_labels
-	) or exit 1;
+	);
+my %config = (
+		alphabet_boundaries => 'IR',
+		regular_font_file => $script_dir . '/Cabin-Regular.otf',
+		bold_font_file => $script_dir . '/Cabin-Bold.otf',
+		small_font_size => 17,
+		normal_font_size => 19,
+		large_font_size => 22,
+		larger_font_size => 26,
+		leading => 1.5,
+		paragraph_spacing => 0.5,
+		max_stars => 3,
+		backdrop_alpha => .075,
+		background_width => 1920,
+		background_height => 1080,
+		background_padding => 50,
+		trail_height => 40,
+		scrollbar_width => 40,
+		icon_width => 800,
+		icon_height => 400,
+		poster_width => 240,
+		poster_height => 360,
+		jpeg_quality => 90,
+		cache_max_age => 30 * 24 * 60 * 60,
+		data_dir_name => '__Dune',
+		access_protocol => 'nfs',
+		smb_username => undef,
+		smb_password => undef
+	);
+# TODO More robust option handling
+foreach my $key (keys %config) {
+	(my $option_name = $key) =~ s/_/-/g;
+	my $type = (defined $config{$key} && $config{$key} =~ /^[0-9.]+$/)
+		? 'f' : 's';
+	$opt{"$option_name=$type"} = \$config{$key};
+}
+$opt{'ignore-genre=s'} = $config{ignore_genres} = [];
+$opt{'video-file-extension=s'} = $config{video_file_extensions} = [];
+GetOptions(%opt) or exit 1;
+$config{alphabet_boundaries} = [ split(//, $config{alphabet_boundaries}) ];
+@{$config{video_file_extensions}} = qw(avi mkv mp4 m4v mpg wmv mov flv vob)
+	unless @{$config{video_file_extensions}};
+
+my $config_file = my_home() . '/.dune-movie-prettifier.json';
+if (-f $config_file) {
+	my $conf = read_json($config_file);
+	while (my ($key, $value) = each %$conf) {
+		$config{$key} = $value if exists $config{$key};
+	}
+}
 
 @ARGV < 2 and croak "Usage: $0 server share [mount]";
 my ($server_name, $share_name, $base_path) = @ARGV;
 $base_path = "//$server_name/$share_name" unless defined $base_path;
 
-# TODO Support SMB
-my $base_url = "nfs://$server_name:/$share_name";
+my $base_url;
+if ($config{access_protocol} eq 'smb') {
+	my $auth;
+	if (defined $config{smb_username} && $config{smb_username} ne '') {
+		require URI::Escape;
+		$auth = URI::Escape::uri_escape($config{smb_username});
+		$auth .= ':' . URI::Escape::uri_escape($config{smb_password})
+			if defined $config{smb_password} && $config{smb_password} ne '';
+		$auth .= '@';
+	} else {
+		$auth = '';
+	}
+	$base_url = "$config{access_protocol}://$auth$server_name/$share_name";
+} else {
+	# NFS assumed
+	$base_url = "$config{access_protocol}://$server_name:/$share_name";
+}
 
-my $dune_path = $base_path . '/' . DUNE_DATA_DIR;
-my $dune_url = $base_url . '/' . DUNE_DATA_DIR;
+my $dune_path = $base_path . '/' . $config{data_dir_name};
+my $dune_url = $base_url . '/' . $config{data_dir_name};
 
 my $api_key_file = my_home() . '/.tmdb';
 open(my $afh, '<', $api_key_file)
@@ -78,7 +116,7 @@ my $api_key = <$afh>;
 close($afh);
 chomp $api_key;
 
-my %ignore_genre = map { $_ => undef } @{IGNORE_GENRES()};
+my %ignore_genre = map { $_ => undef } @{$config{ignore_genres}};
 my %font_metrics = ();
 
 attempt_mkdir("$dune_path");
@@ -112,7 +150,7 @@ closedir($root_dh);
 @movies = sort { uc($a) cmp uc($b) }
 	grep { /^[^._]/ && -d "$base_path/$_" } @movies;
 
-my $ignore_file = SCRIPT_DIR . '/ignore.txt';
+my $ignore_file = $script_dir . '/ignore.txt';
 my $ignore_re = '(?:19|20)\d\d';
 if (-e $ignore_file) {
 	open(my $ifh, '<', $ignore_file)
@@ -197,7 +235,7 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 	my $poster_filename = "$dune_path/cache/posters/$movie_id.jpg";
 
 	my $renew = $renew_info || !-e $cache_file
-		|| (stat($cache_file))[9] + CACHE_MAX_AGE < time;
+		|| (stat($cache_file))[9] + $config{cache_max_age} < time;
 	my $data;
 	if ($renew) {
 		my $movie = $tmdb->movie('id' => $id);
@@ -225,7 +263,7 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 			map { decode('utf8', $_->{name}) }
 			sort { $a->{order} <=> $b->{order} }
 			@{$castcrew->{cast}});
-		splice @stars, MAX_STARS if @stars > MAX_STARS;
+		splice @stars, $config{max_stars} if @stars > $config{max_stars};
 		my @directors = remove_duplicates(
 			map { decode('utf8', $_->{name}) }
 			grep { $_->{department} eq 'Directing' && $_->{job} eq 'Director' }
@@ -269,8 +307,8 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 	my $aid;
 	if ($first ge 'A' && $first le 'Z') {
 		$aid = 0;
-		while ($aid < @{ALPHABET_BOUNDARIES()}
-				&& $first ge ALPHABET_BOUNDARIES->[$aid]) {
+		while ($aid < @{$config{alphabet_boundaries}}
+				&& $first ge $config{alphabet_boundaries}->[$aid]) {
 			$aid++;
 		}
 	} else {
@@ -296,8 +334,8 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 	next if !$renew_images && !$renew && -e $movie_dir;
 	attempt_mkdir($movie_dir);
 
-	my $padding = (ICON_HEIGHT - POSTER_HEIGHT) / 2;
-	my $icon_gd = GD::Image->new(ICON_WIDTH, ICON_HEIGHT, 1);
+	my $padding = ($config{icon_height} - $config{poster_height}) / 2;
+	my $icon_gd = GD::Image->new($config{icon_width}, $config{icon_height}, 1);
 	my $black = $icon_gd->colorAllocate(0, 0, 0);
 	my $white = $icon_gd->colorAllocate(255, 255, 255);
 	my $transp = $icon_gd->colorAllocateAlpha(255, 255, 255, 79);
@@ -312,7 +350,7 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 		? GD::Image->newFromPng($poster_filename, 1)
 		: GD::Image->newFromJpeg($poster_filename, 1);
 	my $par = $poster_gd->width / $poster_gd->height;
-	my $iar = POSTER_WIDTH / POSTER_HEIGHT;
+	my $iar = $config{poster_width} / $config{poster_height};
 	my ($srcx, $srcy, $srcw, $srch);
 	if ($par < $iar) {
 		$srcx = 0;
@@ -328,7 +366,7 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 		$srcw = $poster_gd->width * (1 - $dar);
 	}
 	$icon_gd->copyResampled($poster_gd,
-		$padding, $padding, $srcx, $srcy, POSTER_WIDTH, POSTER_HEIGHT,
+		$padding, $padding, $srcx, $srcy, $config{poster_width}, $config{poster_height},
 		$srcw, $srch);
 	
 	my $byline;
@@ -351,25 +389,25 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 	push @paragraphs, [ nice_array(@{$data->{stars}}), 0 ]
 		if @{$data->{stars}};
 	
-	my $m = get_font_metrics(REGULAR_FONT_FILE, NORMAL_FONT_SIZE);
-	my $pad = PARAGRAPH_SPACING * $m->{line_height};
+	my $m = get_font_metrics($config{regular_font_file}, $config{normal_font_size});
+	my $pad = $config{paragraph_spacing} * $m->{line_height};
 
-	my $m2 = get_font_metrics(BOLD_FONT_FILE, LARGER_FONT_SIZE);
-	my $x = $padding + POSTER_WIDTH
-		+ (LEADING - 1 + PARAGRAPH_SPACING) * $m2->{line_height};
-	my $w = ICON_WIDTH - $padding - $x;
+	my $m2 = get_font_metrics($config{bold_font_file}, $config{larger_font_size});
+	my $x = $padding + $config{poster_width}
+		+ ($config{leading} - 1 + $config{paragraph_spacing}) * $m2->{line_height};
+	my $w = $config{icon_width} - $padding - $x;
 	my $y = $padding;
 	my ($font_file, $font_size, $color);
 	foreach my $par (@paragraphs) {
 		if ($par->[1]) {
 			($font_file, $font_size, $color)
-				= (BOLD_FONT_FILE, LARGER_FONT_SIZE, $white);
+				= ($config{bold_font_file}, $config{larger_font_size}, $white);
 		} else {
 			($font_file, $font_size, $color)
-				= (REGULAR_FONT_FILE, NORMAL_FONT_SIZE, $transp);
+				= ($config{regular_font_file}, $config{normal_font_size}, $transp);
 		}
 		$y = render_text($icon_gd, $par->[0], $x, $y, $w, undef,
-			$font_file, $font_size, LEADING, $color);
+			$font_file, $font_size, $config{leading}, $color);
 		$y += $pad;
 	}
 	
@@ -378,24 +416,25 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 	my $bg_padding = 100;
 	my $bg_poster_text_dist = 100;
 	my $text_margin = 100;
-	my $bgph = BACKGROUND_HEIGHT - 2 * $bg_padding;
+	my $bgph = $config{background_height} - 2 * $bg_padding;
 	my $bgpw = $poster_gd->width * $bgph / $poster_gd->height;
-	my $bg_gd = GD::Image->new(BACKGROUND_WIDTH, BACKGROUND_HEIGHT, 1);
+	my $bg_gd = GD::Image->new($config{background_width}, $config{background_height}, 1);
 	$black = $bg_gd->colorAllocate(0, 0, 0);
 	$white = $bg_gd->colorAllocate(255, 255, 255);
 	$transp = $bg_gd->colorAllocateAlpha(255, 255, 255, 79);
 	if (-s $backdrop_filename) {
 		my $bd_gd = GD::Image->newFromJpeg($backdrop_filename, 1);
-		my $tb = $bg_gd->colorAllocateAlpha(0, 0, 0, round(127 * BACKDROP_ALPHA));
+		my $tb = $bg_gd->colorAllocateAlpha(
+			0, 0, 0, round(127 * $config{backdrop_alpha}));
 		$bd_gd->filledRectangle(0, 0, $bd_gd->width - 1, $bd_gd->height - 1, $tb);
 		$bg_gd->copyResampled($bd_gd, 0, 0, 0, 0,
-			BACKGROUND_WIDTH, BACKGROUND_HEIGHT, $bd_gd->width, $bd_gd->height);
+			$config{background_width}, $config{background_height}, $bd_gd->width, $bd_gd->height);
 	}
 	$bg_gd->copyResampled($poster_gd,
 		$bg_padding, $bg_padding, 0, 0, $bgpw, $bgph,
 		$poster_gd->width, $poster_gd->height);
 	$x = $bg_padding + $bgpw + $bg_poster_text_dist;
-	$w = BACKGROUND_WIDTH - $x - $bg_padding;
+	$w = $config{background_width} - $x - $bg_padding;
 	
 	my @byline = ();
 	push @byline, $byline if defined $byline;
@@ -431,33 +470,33 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 
 	my $playw = 300;
 	my $playh = 50;
-	my $playx = BACKGROUND_WIDTH - $bg_padding - $playw;
-	my $playy = BACKGROUND_HEIGHT - $bg_padding - $text_margin - $playh;
+	my $playx = $config{background_width} - $bg_padding - $playw;
+	my $playy = $config{background_height} - $bg_padding - $text_margin - $playh;
 
-	$m = get_font_metrics(REGULAR_FONT_FILE, SMALL_FONT_SIZE);
+	$m = get_font_metrics($config{regular_font_file}, $config{small_font_size});
 	$y = $bg_padding + $text_margin;
 	PAR: foreach my $par (@paragraphs) {
 		unless (defined $par) {
 			$m = get_font_metrics($font_file, $font_size);
-			$y += PARAGRAPH_SPACING * $m->{line_height};
+			$y += $config{paragraph_spacing} * $m->{line_height};
 			next;
 		}
 		if ($par->[1] == -1) {
 			($font_file, $font_size, $color)
-				= (REGULAR_FONT_FILE, SMALL_FONT_SIZE, $transp);
+				= ($config{regular_font_file}, $config{small_font_size}, $transp);
 			$color = $transp;
 		} elsif ($par->[1] == 1) {
 			($font_file, $font_size, $color)
-				= (BOLD_FONT_FILE, LARGER_FONT_SIZE, $white);
+				= ($config{bold_font_file}, $config{larger_font_size}, $white);
 		} else {
 			($font_file, $font_size, $color)
-				= (REGULAR_FONT_FILE, NORMAL_FONT_SIZE, $transp);
+				= ($config{regular_font_file}, $config{normal_font_size}, $transp);
 		}
 		my $maxh = $playy - $y - $m->{line_height};
 		$y = render_text($bg_gd, $par->[0], $x, $y, $w, $maxh,
-			$font_file, $font_size, LEADING, $color);
+			$font_file, $font_size, $config{leading}, $color);
 		$m = get_font_metrics($font_file, $font_size);
-		$y += PARAGRAPH_SPACING * $m->{line_height};
+		$y += $config{paragraph_spacing} * $m->{line_height};
 	}
 
 	my $dir = "$base_path/$movie_id";
@@ -466,8 +505,8 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 		or croak qq{Cannot open directory "$dir$sub": $!};
 	my @movie_files = readdir($movie_dh);
 	closedir($movie_dh);
-	@movie_files = sort_nicely(
-		grep { /\.(?:avi|mkv|mp4|m4v|vob)$/i } @movie_files);
+	my $ext_re = join '|', @{$config{video_file_extensions}};
+	@movie_files = sort_nicely(grep { /\.(?:$ext_re)$/i } @movie_files);
 	
 	if (@movie_files > 1) {
 		my $playlist_file = "$dune_path/content/$movie_id/playlist.pls";
@@ -488,7 +527,7 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 	#my $bitrate = $mediainfo->{size} / $mediainfo->{duration}
 	#	* 8 * 1000 / 1024 / 1024; # bits, ms, kb, mb -> Mbps
 	my $ar = $mediainfo->{video}{width} / $mediainfo->{video}{height};
-	my $sar = BACKGROUND_WIDTH / BACKGROUND_HEIGHT;
+	my $sar = $config{background_width} / $config{background_height};
 	my $scaled_height = ($ar < $sar)
 		? $mediainfo->{video}{height}
 		: $mediainfo->{video}{width} / $sar;
@@ -514,16 +553,16 @@ foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
 		$playx + $playw - 1, $playy + $playh - 1, $darken);
 	$bg_gd->rectangle($playx, $playy,
 		$playx + $playw - 1, $playy + $playh - 1, $white);
-	$m = get_font_metrics(REGULAR_FONT_FILE, NORMAL_FONT_SIZE);
+	$m = get_font_metrics($config{regular_font_file}, $config{normal_font_size});
 	my $line_height = $m->{ascent};
-	$bg_gd->stringFT($transp, REGULAR_FONT_FILE, NORMAL_FONT_SIZE, 0,
+	$bg_gd->stringFT($transp, $config{regular_font_file}, $config{normal_font_size}, 0,
 		$x,
 		$playy + ($playh - $line_height) / 2 + $line_height * .85,
 		$mediainfo_line);
 	my $label = 'Play Movie';
 	my $width = (GD::Image->stringFT($white,
-		BOLD_FONT_FILE, NORMAL_FONT_SIZE, 0, 0, 0, $label))[2];
-	$bg_gd->stringFT($white, BOLD_FONT_FILE, NORMAL_FONT_SIZE, 0,
+		$config{bold_font_file}, $config{normal_font_size}, 0, 0, 0, $label))[2];
+	$bg_gd->stringFT($white, $config{bold_font_file}, $config{normal_font_size}, 0,
 		$playx + ($playw - $width) / 2,
 		$playy + ($playh - $line_height) / 2 + $line_height * .85,
 		$label);
@@ -569,15 +608,15 @@ END
 my $rowh = 70;
 my $fix = 40;
 
-my $cboxw = BACKGROUND_WIDTH - 2 * BACKGROUND_PADDING;
-my $cboxwx = $cboxw + SCROLLBAR_WIDTH;
-my $bodyh = BACKGROUND_HEIGHT - 2 * BACKGROUND_PADDING - TRAIL_HEIGHT;
+my $cboxw = $config{background_width} - 2 * $config{background_padding};
+my $cboxwx = $cboxw + $config{scrollbar_width};
+my $bodyh = $config{background_height} - 2 * $config{background_padding} - $config{trail_height};
 
 my $maxrowcnt = int(($bodyh - $fix) / $rowh);
 
-my $cboxx = BACKGROUND_PADDING;
+my $cboxx = $config{background_padding};
 my $cboxh = $rowh + $fix;
-my $cboxy = BACKGROUND_PADDING + int(($bodyh - $cboxh) / 2);
+my $cboxy = $config{background_padding} + int(($bodyh - $cboxh) / 2);
 
 my (@keys, %data);
 
@@ -592,7 +631,7 @@ create_movie_folders('decade', \@keys, \%data, 9, 1);
 
 @keys = ();
 %data = ();
-my @letters = (@{ALPHABET_BOUNDARIES()}, chr(ord('Z') + 1));
+my @letters = (@{$config{alphabet_boundaries}}, chr(ord('Z') + 1));
 my $first_letter = 'A';
 for (my $i = 0; $i < @letters; $i++) {
 	my $second_letter = chr(ord($letters[$i]) - 1);
@@ -653,7 +692,7 @@ foreach my $by (qw(title genre decade star director writer)) {
 	my $d = ucfirst $by;
 	my $caption = "By $d";
 	my $hash = create_label($caption,
-		REGULAR_FONT_FILE, LARGE_FONT_SIZE);
+		$config{regular_font_file}, $config{large_font_size});
 	print $root_fh <<END;
 item.$i.caption = $caption
 item.$i.icon_path = $dune_url/labels/$hash.png
@@ -755,8 +794,8 @@ sub create_movie_folders {
 	my $colcnt = min $cols, scalar @keys;
 	my $cboxw = $rows > $rowcnt ? $cboxw : $cboxwx;
 	my $cboxh = $rowcnt * $rowh + $fix;
-	my $cboxx = BACKGROUND_PADDING;
-	my $cboxy = BACKGROUND_PADDING + int(($bodyh - $cboxh) / 2);
+	my $cboxx = $config{background_padding};
+	my $cboxy = $config{background_padding} + int(($bodyh - $cboxh) / 2);
 	open(my $fh, '>:utf8', "$abs/dune_folder.txt")
 		or croak qq{Cannot open "$abs/dune_folder.txt" for writing: $!};
 	print $fh <<END;
@@ -786,11 +825,11 @@ END
 		my ($caption, $keydata) = @{$data->{$key}};
 		create_movie_folder("$rel/$key", $keydata, [ @$trail, $caption ]);
 		my $hash = create_label($caption,
-			REGULAR_FONT_FILE,
-			$large ? LARGE_FONT_SIZE : NORMAL_FONT_SIZE,
+			$config{regular_font_file},
+			$large ? $config{large_font_size} : $config{normal_font_size},
 			scalar(@$keydata),
-			REGULAR_FONT_FILE,
-			SMALL_FONT_SIZE);
+			$config{regular_font_file},
+			$config{small_font_size});
 		$caption = decode_entities($caption);
 		print $fh <<END;
 item.$cnt.caption = $caption
@@ -809,8 +848,8 @@ sub create_movie_folder {
 	attempt_mkdir($abs);
 	create_background($rel, $trail);
 	my $w = @$movies > 4 ? $cboxw : $cboxwx;
-	my $cboxx = BACKGROUND_PADDING;
-	my $cboxy = BACKGROUND_PADDING;
+	my $cboxx = $config{background_padding};
+	my $cboxy = $config{background_padding};
 	my $cboxh = $bodyh;
 	open(my $fh, '>:utf8', "$abs/dune_folder.txt")
 		or croak qq{Cannot open "$abs/dune_folder.txt" for writing: $!};
@@ -853,16 +892,16 @@ sub create_background {
 	my $abs = "$dune_path/$rel";
 	my $file = "$abs/background.png";
 	return if !$renew_images && -e $file;
-	my $img = GD::Image->new(BACKGROUND_WIDTH, BACKGROUND_HEIGHT, 1);
+	my $img = GD::Image->new($config{background_width}, $config{background_height}, 1);
 	$img->colorAllocate(0, 0, 0);
 	my $fg = $img->colorAllocateAlpha(255, 255, 255, 79);
 	my $text = join('  >  ', 'Home', 'Movies', @$trail);
-	my $font_file = REGULAR_FONT_FILE;
-	my $font_size = SMALL_FONT_SIZE;
+	my $font_file = $config{regular_font_file};
+	my $font_size = $config{small_font_size};
 	my $m = get_font_metrics($font_file, $font_size);
 	my $w = get_text_width($text, $font_file, $font_size);
-	my $x = (BACKGROUND_WIDTH - $w) / 2;
-	my $y = BACKGROUND_HEIGHT - BACKGROUND_PADDING;
+	my $x = ($config{background_width} - $w) / 2;
+	my $y = $config{background_height} - $config{background_padding};
 	$img->stringFT($fg, $font_file, $font_size, 0, $x, $y, $text);
 	write_image($img, $file);
 }
@@ -999,7 +1038,7 @@ sub write_image {
 	open(my $fh, '>', $file)
 		or croak qq{Cannot open "$file" for writing: $!};
 	binmode($fh);
-	print $fh $jpeg ? $img->jpeg(JPEG_QUALITY) : $img->png();
+	print $fh $jpeg ? $img->jpeg($config{jpeg_quality}) : $img->png();
 	close($fh);
 }
 
