@@ -131,13 +131,13 @@ attempt_mkdir("$dune_path/cache/tmdb");
 attempt_mkdir("$dune_path/cache/backdrops");
 attempt_mkdir("$dune_path/cache/posters");
 
-my %cache = ();
-my $cache_file = "$dune_path/cache/tmdb/id.txt";
-if (-e $cache_file) {
-	open(my $fh, '<', $cache_file)
-		or croak qq{Cannot open "$cache_file" for reading: $!};
+my %movie_ids = ();
+my $id_file = "$dune_path/cache/tmdb/id.txt";
+if (-e $id_file) {
+	open(my $fh, '<', $id_file)
+		or croak qq{Cannot open "$id_file" for reading: $!};
 	while (<$fh>) {
-		/(.*?)=(.*)/ and $cache{$1} = $2;
+		/(.*?)=(.*)/ and $movie_ids{$1} = $2;
 	}
 	close($fh);
 }
@@ -152,7 +152,7 @@ closedir($root_dh);
 @movies = sort { uc($a) cmp uc($b) }
 	grep { /^[^._]/ && -d "$base_path/$_" } @movies;
 
-foreach my $movie_id (grep { !exists $cache{$_} } @movies) {
+foreach my $movie_id (grep { !exists $movie_ids{$_} } @movies) {
 	print "Determining TMDB ID of $movie_id ...\n";
 	(my $query = $movie_id) =~ s/[.!,;\-_]/ /g;
 	$query =~ s/\ (?:$movie_ignore_re)(?:\ .*|$)//oix;
@@ -187,24 +187,24 @@ foreach my $movie_id (grep { !exists $cache{$_} } @movies) {
 	}
 	if (defined $tmdb_id) {
 		print "ID is $tmdb_id\n";
-		$cache{$movie_id} = $tmdb_id;
+		$movie_ids{$movie_id} = $tmdb_id;
 	} else {
 		print "ID unknown\n";
 	}
 }
 
 my %temp = map { $_ => undef } @movies;
-foreach my $m (grep { !exists $temp{$_} } keys %cache) {
+foreach my $m (grep { !exists $temp{$_} } keys %movie_ids) {
 	print "Cached movie $m no longer exists\n";
-	delete $cache{$m};
+	delete $movie_ids{$m};
 	unlink "$dune_path/cache/backdrops/$m.jpg",
 		"$dune_path/cache/posters/$m.jpg";
 	remove_tree "$dune_path/content/$m";
 }
 
-open(my $fh, '>:utf8', $cache_file)
-	or croak qq{Cannot open "$cache_file" for writing: $!};
-while (my ($movie_id, $id) = each %cache) {
+open(my $fh, '>:utf8', $id_file)
+	or croak qq{Cannot open "$id_file" for writing: $!};
+while (my ($movie_id, $id) = each %movie_ids) {
 	print $fh "$movie_id=$id\n";
 }
 close($fh);
@@ -216,8 +216,8 @@ my %by_actor = ();
 my %by_director = ();
 my %by_writer = ();
 
-foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %cache) {
-	my $id = $cache{$movie_id};
+foreach my $movie_id (sort { uc($a) cmp uc($b) } keys %movie_ids) {
+	my $id = $movie_ids{$movie_id};
 	print "$movie_id ($id)\n";
 
 	my $cache_file = "$dune_path/cache/tmdb/$id.json";
